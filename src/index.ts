@@ -12,7 +12,7 @@ import authRoutes from "./routes/auth.routes";
 import videoRoutes from "./routes/video.routes";
 import categoryRoutes from "./routes/category.routes";
 import videoInteractions from "./routes/videoInteractions.routes";
-
+import commentsRouter from "./routes/comment.routes";
 // src/index.ts (or app.ts)
 process.on("uncaughtException", (err) => {
   console.error("Uncaught exception:", err);
@@ -29,13 +29,14 @@ const PORT = process.env.PORT ?? 5000;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: ["http://localhost:3000"] }));
 // Mount routers
 app.use("/api/auth", authRoutes);
 app.use("/api/videos", videoRoutes);
 app.use("/api/video/interactions", videoInteractions);
 app.use("/api/channels", channelRoutes);
 app.use("/api/categories", categoryRoutes);
+app.use("/api/comments", commentsRouter);
 
 async function initializeApp() {
   try {
