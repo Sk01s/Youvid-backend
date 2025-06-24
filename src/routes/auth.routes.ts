@@ -6,8 +6,9 @@ import { authenticate } from "../middleware/auth.middleware";
 const router = Router();
 
 // Public
-router.post("/authenticate", AuthController.authenticate);
+router.post("/login", AuthController.authenticate);
 router.post("/logout", AuthController.logout);
+router.get("/authenticate", AuthController.verfiy);
 
 // Protected
 router.get("/profile", authenticate, AuthController.profile);
