@@ -9,7 +9,7 @@ const router = express.Router();
 
 // Get subscription status
 router.get(
-  "/channels/:channelId/subscription",
+  "/:channelId/subscription",
   // ensureAuth middleware should set req.user
   getSubscriptionStatusController
 );

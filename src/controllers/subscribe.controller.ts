@@ -17,8 +17,8 @@ export const getSubscriptionStatusController = async (
       `SELECT 1 FROM subscriptions WHERE user_id = $1 AND channel_id = $2`,
       [userId, channelId]
     );
-    const subscribed = rowCount ? rowCount > 0 : 0;
-    res.status(200).json({ subscribed });
+    const isSubscribed = rowCount ? rowCount > 0 : 0;
+    res.status(200).json({ isSubscribed });
     return;
   } catch (err) {
     console.error("get subscription status error:", err);

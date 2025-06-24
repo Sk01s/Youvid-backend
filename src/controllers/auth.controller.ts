@@ -5,7 +5,7 @@ import pool from "../models";
 
 export class AuthController {
   /**
-   * POST /api/auth/authenticate
+   * POST /api/auth/login
    * Body: { email, password, username? }
    */
   static authenticate: RequestHandler = async (req, res) => {
@@ -35,6 +35,25 @@ export class AuthController {
       }
       res.status(500).json({ message: "Authentication failed" });
       return; // <— void return
+    }
+  };
+  /**
+   * GET /api/auth/authenticate
+   */
+  static verfiy: RequestHandler = async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      res.status(401).json({ message: "Authentication required" });
+      return;
+    }
+    const token = authHeader.split(" ")[1];
+    try {
+      const decoded = AuthService.verifyToken(token);
+
+      res.status(200).json({ id: decoded.id, username: decoded.username });
+    } catch (err) {
+      res.status(401).json({ message: "Invalid or expired token" });
+      return;
     }
   };
 

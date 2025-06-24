@@ -6,7 +6,6 @@ import fs from "fs";
 import pool, { Video } from "../models";
 import { StorageService } from "../services/storage.service";
 import { FFmpegService } from "../services/ffmpeg.service";
-import { AuthService } from "../services/auth.service";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -206,43 +205,100 @@ export class VideoController {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
     const offset = (page - 1) * limit;
+    const type = req.query.type as string | undefined;
+    const category = req.query.category as string | undefined;
+    const search = req.query.search as string | undefined;
+    const userId = req.user?.id;
 
-    const videosResult = await pool.query(
-      `SELECT v.id, v.title, v.thumbnail_key, v.duration, v.views, v.created_at,
-      c.name AS channel_name , c.avatar as channel_avatar,
-      c.id as channel_id
-       FROM videos v
-       JOIN channels c ON v.channel_id = c.id
-       WHERE v.status = 'ready'
-       ORDER BY v.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    // Base query with joins
+    let baseQuery = `
+        SELECT v.id, v.title, v.thumbnail_key, v.duration, v.views, v.created_at,
+               c.name AS channel_name, c.avatar as channel_avatar, c.id as channel_id
+        FROM videos v
+        JOIN channels c ON v.channel_id = c.id
+        WHERE v.status = 'ready'
+    `;
 
-    const countResult = await pool.query<{ count: string }>(
-      `SELECT COUNT(*) FROM videos WHERE status = 'ready'`
-    );
+    // Additional conditions based on type
+    const queryParams: any[] = [];
+    let orderBy = "ORDER BY v.created_at DESC";
+    if (type === "subscriptions" && userId) {
+      // Subscription videos - channels the user is subscribed to
+      baseQuery += `
+            AND c.id IN (
+                SELECT channel_id 
+                FROM subscriptions 
+                WHERE user_id = $${queryParams.length + 1}
+            )
+        `;
+      queryParams.push(userId);
+    } else if (type === "trending") {
+      // Trending videos - most viewed in last 7 days
+      baseQuery += `
+            AND v.created_at >= NOW() - INTERVAL '7 days'
+        `;
+      orderBy = "ORDER BY v.views DESC, v.created_at DESC";
+    }
 
-    const total = Number(countResult.rows[0].count);
-    const videos = await Promise.all(
-      videosResult.rows.map(async (video) => {
-        const thumbnailUrl = video.thumbnail_key
-          ? await StorageService.getSignedUrl(video.thumbnail_key, 3600)
-          : null;
+    // Category filter
+    if (category) {
+      baseQuery += ` AND v.category_id = $${queryParams.length + 1}`;
+      queryParams.push(category);
+    }
 
-        return {
-          ...video,
-          thumbnailUrl,
-        };
-      })
-    );
+    // Search filter
+    if (search) {
+      baseQuery += ` AND (v.title ILIKE $${
+        queryParams.length + 1
+      } OR v.description ILIKE $${queryParams.length + 1})`;
+      queryParams.push(`%${search}%`);
+    }
 
-    res.json({
-      data: videos,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    });
+    // Main videos query
+    const videosQuery = `
+        ${baseQuery}
+        ${orderBy}
+        LIMIT $${queryParams.length + 1} 
+        OFFSET $${queryParams.length + 2}
+    `;
+
+    // Count query for pagination
+    const countQuery = `
+        SELECT COUNT(*) 
+        FROM (${baseQuery}) AS total
+    `;
+
+    try {
+      // Execute both queries in parallel
+      const [videosResult, countResult] = await Promise.all([
+        pool.query(videosQuery, [...queryParams, limit, offset]),
+        pool.query(countQuery, queryParams),
+      ]);
+
+      const total = Number(countResult.rows[0].count);
+      const videos = await Promise.all(
+        videosResult.rows.map(async (video) => {
+          const thumbnailUrl = video.thumbnail_key
+            ? await StorageService.getSignedUrl(video.thumbnail_key, 3600)
+            : null;
+
+          return {
+            ...video,
+            thumbnailUrl,
+          };
+        })
+      );
+
+      res.json({
+        data: videos,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      console.error("Failed to fetch videos:", error);
+      res.status(500).json({ message: "Failed to fetch videos" });
+    }
   };
 
   static getUserVideos: RequestHandler = async (req, res) => {
@@ -256,7 +312,6 @@ export class VideoController {
        ORDER BY v.created_at DESC`,
       [userId]
     );
-
     const videos = await Promise.all(
       rows.map(async (video) => {
         const thumbnailUrl = video.thumbnail_key
@@ -269,8 +324,264 @@ export class VideoController {
         };
       })
     );
-
     res.json(videos);
+  };
+
+  static getUserViewedVideos: RequestHandler = async (req, res) => {
+    try {
+      const userId = req.user!.id; // Get user ID from authenticated request
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
+      const offset = (page - 1) * limit;
+      // Query to get paginated viewed videos
+      const viewedVideosQuery = `
+      SELECT v.*, 
+             c.name AS channel_name,
+             c.avatar AS channel_avatar,
+             c.id AS channel_id
+      FROM video_views vv
+      JOIN videos v ON vv.video_id = v.id
+      JOIN channels c ON v.channel_id = c.id
+      WHERE vv.user_id = $1
+      ORDER BY vv.created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+      // Query to get total count
+      const countQuery = `
+      SELECT COUNT(*) 
+      FROM video_views 
+      WHERE user_id = $1
+    `;
+
+      // Execute both queries in parallel
+      const [videosResult, countResult] = await Promise.all([
+        pool.query(viewedVideosQuery, [userId, limit, offset]),
+        pool.query(countQuery, [userId]),
+      ]);
+
+      const total = Number(countResult.rows[0].count);
+      const videos = await Promise.all(
+        videosResult.rows.map(async (video: any) => {
+          const thumbnailUrl = video.thumbnail_key
+            ? await StorageService.getSignedUrl(video.thumbnail_key, 3600)
+            : null;
+
+          return {
+            ...video,
+            thumbnailUrl,
+            channel: {
+              id: video.channel_id,
+              name: video.channel_name,
+              avatar: video.channel_avatar,
+            },
+          };
+        })
+      );
+
+      res.json({
+        data: videos,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      console.error("Failed to fetch viewed videos:", error);
+      res.status(500).json({ message: "Failed to fetch viewed videos" });
+    }
+  };
+
+  static getLikedVideos: RequestHandler = async (req, res) => {
+    try {
+      const userId = req.user!.id;
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
+      const offset = (page - 1) * limit;
+
+      // Query to get paginated liked videos
+      const likedVideosQuery = `
+      SELECT v.*, 
+             c.name AS channel_name,
+             c.avatar AS channel_avatar,
+             c.id AS channel_id
+      FROM video_interactions vi
+      JOIN videos v ON vi.video_id = v.id
+      JOIN channels c ON v.channel_id = c.id
+      WHERE vi.user_id = $1 AND vi.is_liked = true
+      ORDER BY vi.created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+      // Query to get total count
+      const countQuery = `
+      SELECT COUNT(*) 
+      FROM video_interactions 
+      WHERE user_id = $1 AND is_liked = true
+    `;
+
+      // Execute both queries in parallel
+      const [videosResult, countResult] = await Promise.all([
+        pool.query(likedVideosQuery, [userId, limit, offset]),
+        pool.query(countQuery, [userId]),
+      ]);
+
+      const total = Number(countResult.rows[0].count);
+      const videos = await Promise.all(
+        videosResult.rows.map(async (video: any) => {
+          const thumbnailUrl = video.thumbnail_key
+            ? await StorageService.getSignedUrl(video.thumbnail_key, 3600)
+            : null;
+
+          return {
+            ...video,
+            thumbnailUrl,
+            channel: {
+              id: video.channel_id,
+              name: video.channel_name,
+              avatar: video.channel_avatar,
+            },
+          };
+        })
+      );
+
+      res.json({
+        data: videos,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      console.error("Failed to fetch liked videos:", error);
+      res.status(500).json({ message: "Failed to fetch liked videos" });
+    }
+  };
+
+  static getSavedVideos: RequestHandler = async (req, res) => {
+    try {
+      const userId = req.user!.id;
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
+      const offset = (page - 1) * limit;
+
+      // Query to get paginated saved videos
+      const savedVideosQuery = `
+      SELECT v.*, 
+             c.name AS channel_name,
+             c.avatar AS channel_avatar,
+             c.id AS channel_id
+      FROM video_interactions vi
+      JOIN videos v ON vi.video_id = v.id
+      JOIN channels c ON v.channel_id = c.id
+      WHERE vi.user_id = $1 AND vi.is_saved = true
+      ORDER BY vi.created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+      // Query to get total count
+      const countQuery = `
+      SELECT COUNT(*) 
+      FROM video_interactions 
+      WHERE user_id = $1 AND is_saved = true
+    `;
+
+      // Execute both queries in parallel
+      const [videosResult, countResult] = await Promise.all([
+        pool.query(savedVideosQuery, [userId, limit, offset]),
+        pool.query(countQuery, [userId]),
+      ]);
+
+      const total = Number(countResult.rows[0].count);
+      const videos = await Promise.all(
+        videosResult.rows.map(async (video: any) => {
+          const thumbnailUrl = video.thumbnail_key
+            ? await StorageService.getSignedUrl(video.thumbnail_key, 3600)
+            : null;
+
+          return {
+            ...video,
+            thumbnailUrl,
+            channel: {
+              id: video.channel_id,
+              name: video.channel_name,
+              avatar: video.channel_avatar,
+            },
+          };
+        })
+      );
+
+      res.json({
+        data: videos,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      console.error("Failed to fetch saved videos:", error);
+      res.status(500).json({ message: "Failed to fetch saved videos" });
+    }
+  };
+  static getChannelVideos: RequestHandler = async (req, res) => {
+    try {
+      const channelId = req.params.channelId;
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
+      const offset = (page - 1) * limit;
+
+      // Query to get paginated channel videos
+      const videosQuery = `
+      SELECT v.*, 
+             c.name AS channel_name,
+             c.avatar AS channel_avatar,
+             c.id AS channel_id
+      FROM videos v
+      JOIN channels c ON v.channel_id = c.id
+      WHERE v.channel_id = $1 AND v.status = 'ready'
+      ORDER BY v.created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+      // Query to get total count
+      const countQuery = `
+      SELECT COUNT(*) 
+      FROM videos 
+      WHERE channel_id = $1 AND status = 'ready'
+    `;
+
+      // Execute both queries in parallel
+      const [videosResult, countResult] = await Promise.all([
+        pool.query(videosQuery, [channelId, limit, offset]),
+        pool.query(countQuery, [channelId]),
+      ]);
+
+      const total = Number(countResult.rows[0].count);
+      const videos = await Promise.all(
+        videosResult.rows.map(async (video: any) => {
+          const thumbnailUrl = video.thumbnail_key
+            ? await StorageService.getSignedUrl(video.thumbnail_key, 3600)
+            : null;
+
+          return {
+            ...video,
+            thumbnailUrl,
+            channel: {
+              id: video.channel_id,
+              name: video.channel_name,
+              avatar: video.channel_avatar,
+            },
+          };
+        })
+      );
+
+      res.json({
+        data: videos,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      console.error("Failed to fetch channel videos:", error);
+      res.status(500).json({ message: "Failed to fetch channel videos" });
+    }
   };
 }
 export async function incrementVideoView(videoId: number, userId: number) {
