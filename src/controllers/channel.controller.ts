@@ -1,82 +1,76 @@
-// controllers/channelController.ts
 import { Request, Response } from "express";
-import pool from "../models"; // assuming `models/index.ts` exports your pg Pool
+import { ChannelRepository } from "../repositories/channel.repository";
+import { NewChannel } from "../types/channel.types";
+
+const repo = new ChannelRepository();
 
 export class ChannelController {
-  static getChannelsByUserId = async (req: Request, res: Response) => {
+  static getChannelByUserId = async (
+    req: Request,
+    res: Response
+  ): Promise<void> => {
     const userId = Number(req.params.userId);
     try {
-      const { rows } = await pool.query(
-        `SELECT * FROM channels WHERE user_id = $1 ORDER BY created_at DESC`,
-        [userId]
-      );
-      res.json(rows);
+      const channels = await repo.findByUserId(userId);
+      res.json(channels);
+    } catch (err) {
+      console.error("Error fetching channels by user_id:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+  static getChannelsForUserId = async (
+    req: Request,
+    res: Response
+  ): Promise<void> => {
+    const userId = req.user!.id;
+    try {
+      const channels = await repo.getForUserId(userId);
+      res.json(channels);
     } catch (err) {
       console.error("Error fetching channels by user_id:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   };
 
-  static getChannelById = async (req: Request, res: Response) => {
+  static getChannelById = async (
+    req: Request,
+    res: Response
+  ): Promise<void> => {
     const id = Number(req.params.id);
     try {
-      const { rows } = await pool.query(
-        `SELECT * FROM channels WHERE id = $1`,
-        [id]
-      );
-      if (!rows[0]) {
+      const channel = await repo.findById(id);
+      if (!channel) {
         res.status(404).json({ error: "Channel not found" });
         return;
       }
-      res.json(rows[0]);
+      res.json(channel);
     } catch (err) {
       console.error("Error fetching channel by id:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   };
 
-  static createChannel = async (req: Request, res: Response) => {
-    const {
-      user_id,
-      name,
-      avatar,
-      subscribers = 0,
-      verified = false,
-    } = req.body;
+  static createChannel = async (req: Request, res: Response): Promise<void> => {
+    const payload: NewChannel = req.body;
     try {
-      const { rows } = await pool.query(
-        `INSERT INTO channels (user_id, name, avatar, subscribers, verified)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *`,
-        [user_id, name, avatar, subscribers, verified]
-      );
-      res.status(201).json(rows[0]);
+      const created = await repo.create(payload);
+      res.status(201).json(created);
     } catch (err) {
       console.error("Error creating channel:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   };
 
-  static updateChannel = async (req: Request, res: Response) => {
+  static updateChannel = async (req: Request, res: Response): Promise<void> => {
     const id = Number(req.params.id);
-    const { name, avatar, subscribers, verified } = req.body;
+    const updates = req.body;
     try {
-      const { rows } = await pool.query(
-        `UPDATE channels
-         SET
-           name        = COALESCE($1, name),
-           avatar      = COALESCE($2, avatar),
-           subscribers = COALESCE($3, subscribers),
-           verified    = COALESCE($4, verified)
-         WHERE id = $5
-         RETURNING *`,
-        [name, avatar, subscribers, verified, id]
-      );
-      if (!rows[0]) {
+      const updated = await repo.update(id, updates);
+      if (!updated) {
         res.status(404).json({ error: "Channel not found" });
         return;
       }
-      res.json(rows[0]);
+      res.json(updated);
     } catch (err) {
       console.error("Error updating channel:", err);
       res.status(500).json({ error: "Internal server error" });

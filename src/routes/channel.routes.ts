@@ -5,11 +5,8 @@ import { authenticate } from "../middleware/auth.middleware";
 import subscribeHistory from "./subscribe.routes";
 const router = Router();
 
-router.get(
-  "/user/:userId",
-  authenticate,
-  ChannelController.getChannelsByUserId
-);
+router.get("/user/:userId", authenticate, ChannelController.getChannelByUserId);
+router.get("/user/", authenticate, ChannelController.getChannelsForUserId);
 router.use("/", authenticate, subscribeHistory);
 
 router.get("/:id", ChannelController.getChannelById);
