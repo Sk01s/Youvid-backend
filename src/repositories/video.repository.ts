@@ -148,11 +148,13 @@ export class VideoRepository {
     }
     // Trending filter
     else if (filter.type === "trending") {
+
       baseQuery += ` AND v.created_at >= NOW() - INTERVAL '7 days'`;
       orderBy = "ORDER BY v.views DESC, v.created_at DESC";
     }
 
     // Category filter
+
     if (filter.category) {
       baseQuery += ` AND v.category_id = $${params.length + 1}`;
       params.push(filter.category);
@@ -190,6 +192,7 @@ export class VideoRepository {
     const [countResult, videosResult] = await Promise.all([
       pool.query<{ total: string }>(countQuery, countParams),
       pool.query<VideoListItem>(videosQuery, videosParams),
+
     ]);
 
     return {

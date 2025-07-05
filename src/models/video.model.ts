@@ -60,4 +60,5 @@ export const createVideosTable = async () => {
   //   CREATE INDEX IF NOT EXISTS videos_title_trgm_idx
   //     ON public.videos USING GIN (title gin_trgm_ops);
   // \`);
+
 };
