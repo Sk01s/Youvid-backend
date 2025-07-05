@@ -1,54 +1,45 @@
-import { RequestHandler } from "express";
-import pool, { Category } from "../models";
+// controllers/categoryController.ts
+import { Request, Response } from "express";
+import { CategoryRepository } from "../repositories/category.repository";
+import { NewCategory } from "../types/category.types";
+
+const repo = new CategoryRepository();
 
 export class CategoryController {
-  static getAll: RequestHandler = async (req, res) => {
+  static getAll = async (req: Request, res: Response): Promise<void> => {
     try {
-      const { rows } = await pool.query<Category>(
-        "SELECT * FROM categories ORDER BY id"
-      );
-      res.json(rows);
+      const categories = await repo.findAll();
+      res.json(categories);
     } catch (err) {
       console.error("Error fetching categories:", err);
       res.status(500).json({ message: "Server error" });
     }
   };
 
-  static getById: RequestHandler = async (req, res) => {
-    const { id } = req.params;
+  static getById = async (req: Request, res: Response): Promise<void> => {
+    const id = Number(req.params.id);
     try {
-      const { rows } = await pool.query<Category>(
-        "SELECT * FROM categories WHERE id = $1",
-        [id]
-      );
-
-      if (rows.length === 0) {
+      const category = await repo.findById(id);
+      if (!category) {
         res.status(404).json({ message: "Category not found" });
         return;
       }
-
-      res.json(rows[0]);
+      res.json(category);
     } catch (err) {
       console.error("Error fetching category:", err);
       res.status(500).json({ message: "Server error" });
     }
   };
 
-  static create: RequestHandler = async (req, res) => {
-    const { name } = req.body;
-
-    if (!name) {
+  static create = async (req: Request, res: Response): Promise<void> => {
+    const payload: NewCategory = req.body;
+    if (!payload.name) {
       res.status(400).json({ message: "Name is required" });
       return;
     }
-
     try {
-      const { rows } = await pool.query<Category>(
-        "INSERT INTO categories (name) VALUES ($1) RETURNING *",
-        [name]
-      );
-
-      res.status(201).json(rows[0]);
+      const category = await repo.create(payload);
+      res.status(201).json(category);
     } catch (err: any) {
       if (err.code === "23505") {
         res.status(409).json({ message: "Category name already exists" });
@@ -59,27 +50,20 @@ export class CategoryController {
     }
   };
 
-  static update: RequestHandler = async (req, res) => {
-    const { id } = req.params;
-    const { name } = req.body;
-
-    if (!name) {
+  static update = async (req: Request, res: Response): Promise<void> => {
+    const id = Number(req.params.id);
+    const payload: NewCategory = req.body;
+    if (!payload.name) {
       res.status(400).json({ message: "Name is required" });
       return;
     }
-
     try {
-      const { rowCount, rows } = await pool.query<Category>(
-        "UPDATE categories SET name = $1 WHERE id = $2 RETURNING *",
-        [name, id]
-      );
-
-      if (rowCount === 0) {
+      const updated = await repo.update(id, payload);
+      if (!updated) {
         res.status(404).json({ message: "Category not found" });
         return;
       }
-
-      res.json(rows[0]);
+      res.json(updated);
     } catch (err: any) {
       if (err.code === "23505") {
         res.status(409).json({ message: "Category name already exists" });
@@ -90,20 +74,14 @@ export class CategoryController {
     }
   };
 
-  static delete: RequestHandler = async (req, res) => {
-    const { id } = req.params;
-
+  static delete = async (req: Request, res: Response): Promise<void> => {
+    const id = Number(req.params.id);
     try {
-      const { rowCount } = await pool.query(
-        "DELETE FROM categories WHERE id = $1",
-        [id]
-      );
-
-      if (rowCount === 0) {
+      const deleted = await repo.delete(id);
+      if (!deleted) {
         res.status(404).json({ message: "Category not found" });
         return;
       }
-
       res.status(204).send();
     } catch (err: any) {
       if (err.code === "23503") {
@@ -112,7 +90,6 @@ export class CategoryController {
         });
         return;
       }
-
       console.error("Error deleting category:", err);
       res.status(500).json({ message: "Server error" });
     }

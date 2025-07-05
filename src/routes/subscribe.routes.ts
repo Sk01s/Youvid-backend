@@ -1,9 +1,6 @@
 import express from "express";
 import { authenticate } from "../middleware/auth.middleware";
-import {
-  getSubscriptionStatusController,
-  toggleSubscriptionController,
-} from "../controllers/subscribe.controller";
+import { SubscriptionController } from "../controllers/subscribe.controller";
 
 const router = express.Router();
 
@@ -11,14 +8,14 @@ const router = express.Router();
 router.get(
   "/:channelId/subscription",
   // ensureAuth middleware should set req.user
-  getSubscriptionStatusController
+  SubscriptionController.getStatus
 );
 
 // require login
 router.post(
   "/:channelId/subscription",
   // ensureAuth middleware should set req.user
-  toggleSubscriptionController
+  SubscriptionController.toggle
 );
 
 export default router;

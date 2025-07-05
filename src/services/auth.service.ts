@@ -1,8 +1,8 @@
 // src/services/auth.service.ts
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
-import pool from "../models";
-import { User } from "../models";
+import pool from "../db/pool";
+import { User } from "../models/user.model";
 
 export class AuthService {
   /**

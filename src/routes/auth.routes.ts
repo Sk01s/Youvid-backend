@@ -8,7 +8,7 @@ const router = Router();
 // Public
 router.post("/login", AuthController.authenticate);
 router.post("/logout", AuthController.logout);
-router.get("/authenticate", AuthController.verfiy);
+router.get("/verify", AuthController.verify);
 
 // Protected
 router.get("/profile", authenticate, AuthController.profile);
