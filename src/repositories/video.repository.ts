@@ -94,67 +94,110 @@ export class VideoRepository {
   async getPaginatedVideos(
     filter: VideoFilterParams
   ): Promise<PaginatedResult<VideoListItem>> {
+    // Build base query and parameters
     let baseQuery = `
-            SELECT v.id, v.title, v.thumbnail_key, v.duration, v.views, v.created_at,
-                   c.name AS channel_name, c.avatar as channel_avatar, c.id as channel_id
-            FROM videos v
-            JOIN channels c ON v.channel_id = c.id
-            WHERE v.status = 'ready'
-        `;
+    SELECT v.id, v.title, v.thumbnail_key, v.duration, v.views, v.created_at,
+           c.name AS channel_name, c.avatar AS channel_avatar, c.id AS channel_id
+    FROM videos v
+    JOIN channels c ON v.channel_id = c.id
+    WHERE v.status = 'ready'
+  `;
 
+    // Common parameters for both count and videos queries
     const params: any[] = [];
     let orderBy = "ORDER BY v.created_at DESC";
+    let relevanceSelect = "";
+    let wildcardPattern: string | null = null;
 
+    // Full-text search support
+    if (filter.search) {
+      const idx = params.length + 1;
+      // search term for tsquery
+      params.push(filter.search);
+
+      // prepare wildcard for ILIKE (videos only)
+      wildcardPattern = `%${filter.search}%`;
+
+      // Include relevance in SELECT
+      relevanceSelect = `, ts_rank(v.title_tsvector, plainto_tsquery('english', $${idx})) AS relevance`;
+
+      // Add full-text filter
+      baseQuery += `
+      AND v.title_tsvector @@ plainto_tsquery('english', $${idx})
+    `;
+
+      // Order by exact match, relevance, then recency (videos only)
+      orderBy = `
+      ORDER BY
+        CASE WHEN v.title ILIKE $${idx + 1} THEN 0 ELSE 1 END,
+        relevance DESC,
+        v.created_at DESC
+    `;
+    }
+
+    // Subscriptions filter
     if (filter.type === "subscriptions" && filter.userId) {
       baseQuery += `
-                AND c.id IN (
-                    SELECT channel_id 
-                    FROM subscriptions 
-                    WHERE user_id = $${params.length + 1}
-                )
-            `;
+      AND c.id IN (
+        SELECT channel_id FROM subscriptions WHERE user_id = $${
+          params.length + 1
+        }
+      )
+    `;
       params.push(filter.userId);
-    } else if (filter.type === "trending") {
+    }
+    // Trending filter
+    else if (filter.type === "trending") {
+
       baseQuery += ` AND v.created_at >= NOW() - INTERVAL '7 days'`;
       orderBy = "ORDER BY v.views DESC, v.created_at DESC";
     }
+
+    // Category filter
 
     if (filter.category) {
       baseQuery += ` AND v.category_id = $${params.length + 1}`;
       params.push(filter.category);
     }
 
-    if (filter.search) {
-      baseQuery += ` AND (v.title ILIKE $${
-        params.length + 1
-      } OR v.description ILIKE $${params.length + 1})`;
-      params.push(`%${filter.search}%`);
-    }
+    // Inject relevanceSelect into SELECT list
+    const selectQuery = baseQuery.replace(
+      "SELECT v.id, v.title,",
+      `SELECT v.id, v.title${relevanceSelect},`
+    );
 
+    // Paginated videos query
     const videosQuery = `
-            ${baseQuery}
-            ${orderBy}
-            LIMIT $${params.length + 1} 
-            OFFSET $${params.length + 2}
-        `;
+    ${selectQuery}
+    ${orderBy}
+    LIMIT $${params.length + (wildcardPattern ? 2 : 1)}
+    OFFSET $${params.length + (wildcardPattern ? 3 : 2)}
+  `;
 
+    // Count total matching rows (no wildcard)
     const countQuery = `
-            SELECT COUNT(*) 
-            FROM (${baseQuery}) AS total
-        `;
+    SELECT COUNT(*) AS total
+    FROM (
+      ${selectQuery}
+    ) AS t
+  `;
 
-    const [videosResult, countResult] = await Promise.all([
-      pool.query<VideoListItem>(videosQuery, [
-        ...params,
-        filter.limit,
-        filter.offset,
-      ]),
-      pool.query(countQuery, params),
+    // Build parameter arrays
+    const countParams = [...params];
+    const videosParams = [...params];
+    if (wildcardPattern) videosParams.push(wildcardPattern);
+    videosParams.push(filter.limit, filter.offset);
+
+    // Execute queries
+    const [countResult, videosResult] = await Promise.all([
+      pool.query<{ total: string }>(countQuery, countParams),
+      pool.query<VideoListItem>(videosQuery, videosParams),
+
     ]);
 
     return {
       data: videosResult.rows,
-      total: Number(countResult.rows[0].count),
+      total: Number(countResult.rows[0].total),
     };
   }
 
